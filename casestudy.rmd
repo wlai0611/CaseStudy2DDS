@@ -1,0 +1,582 @@
+---
+title: "casestudy2"
+author: "Walter"
+date: "February 29, 2020"
+output: html_document
+---
+
+```{r}
+
+#C:/Users/Walt/Desktop/datascience/DoingDataScience/MDS-6306-Doing-Data-Science-Fall-2019-master/MDS-6306-Doing-Data-Science-Fall-2019-master/Unit 14 and 15 Case Study 2/
+#
+employees=read.csv("CaseStudy2-data.csv")
+#mse calculator function borrowed from Dr. Sadler
+#the idea to use a portion of the dataframe to contain only the explanatory variables of interest
+#when automating variable selection "subdf", was developed in conversation with
+# David Josephs TA DDS in his Office Hours. 
+source("meanSquaredErrorFunctions.r")
+#EDA functions taken from David Josephs TA for DDS
+#https://github.com/josephsdavid/teachR/blob/master/R/EDAreg.R
+source("EDAfunctions.r")
+#regressionDiagnostics.r borrows code from https://rpubs.com/Hank_Stevens/prp
+source("regressionDiagnostics.r")
+employees$logIncome=log(employees$MonthlyIncome)
+
+employees=employees[,names(employees)!="Over18"]
+```
+Check for missing values
+```{r}
+#Week 3 DDS Dr. Bivin Sadler's code
+sapply(employees, function(x) sum(is.na(x)))
+
+```
+Try to eliminate some packages
+```{r}
+library(tidyr)
+library(ggplot2)
+library(purrr)
+library(dplyr)
+library(gplots)
+library(Hmisc)
+library(e1071)
+library(caret)
+library(randomForest)
+library(MASS)
+library(rpart)
+library(cowplot)
+library(smbinning)
+library(ipred)
+
+```
+
+
+```{r}
+# David Joseph's TeachR provides implementation for heatmapper
+heatmapper(employees)
+```
+
+Filter variables for only factor or numeric for specific plots
+```{r}
+factorNames=employees %>% keep(is.factor) %>% names
+numberNames=employees  %>% keep(is.numeric) %>% names
+
+
+```
+
+Visualize  Categorical Variables effect on Log Income
+```{r}
+dotplotlist=lapply(factorNames,function(x) dotplot(employees,x,"logIncome"))
+plot_grid(plotlist =  dotplotlist)
+
+```
+Check various transformations on all variables.  Only log linear was fruitful
+
+```{r}
+
+logLinplotlist= lapply(numberNames,function(x) scatterplots(employees,x,"logIncome"))
+
+
+logEmployees=vapply(employees[,numberNames],function(x) log(x), numeric(nrow(employees)))
+sqrtEmployees=vapply(employees[,numberNames],function(x) sqrt(x), numeric(nrow(employees)))
+logEmployees=as.data.frame(logEmployees)
+sqrtEmployees=as.data.frame(sqrtEmployees)
+
+
+#lscatterplotlist= lapply(numberNames,function(x) scatterplots(logEmployees,x,"logIncome"))
+
+
+#linLogplotlist= lapply(numberNames,function(x) scatterplots(logEmployees,x,"MonthlyIncome"))
+
+#scatterplotlist=lapply(numberNames,function(x) scatterplots(employees,x,"MonthlyIncome"))
+
+sqrtEmployees=sqrtEmployees %>% mutate(logIncome=logIncome^2)
+sqrtplotlist=lapply(numberNames,function(x) scatterplots(sqrtEmployees,x,"logIncome"))
+```
+
+
+Explore Ordinal Variables
+```{r}
+#factorNumVars=lapply(numberNames,function(x) factor(employees[,x],levels = unique(employees[,x])))
+#factorNumVars=as.data.frame(factorNumVars)
+#names(factorNumVars)=numberNames
+
+#factorNumVars$logIncome=as.character(factorNumVars$logIncome)
+
+#factorNumVars$logIncome=as.numeric(factorNumVars$logIncome)
+
+
+```
+
+
+```{r}
+
+scatterplotlist = lapply(numberNames, function(x) scatterplots(employees,x,"logIncome"))
+
+```
+
+Transform variables
+```{r}
+employees=employees %>% mutate(YearsAtCompany=sqrt(YearsAtCompany),
+                               YearsWithCurrManager=sqrt(YearsWithCurrManager),
+                               TotalWorkingYears=sqrt(TotalWorkingYears),
+                               YearsInCurrentRole=sqrt(YearsInCurrentRole))
+sqrtscatterlist = lapply(numberNames, function(x) scatterplots(employees,x,"logIncome"))
+
+```
+
+Create a df with most good variables for salary and add explans and keep 
+```{r}
+#EXCLUDE LOG INCOME FROM MODEL
+
+#starting model
+
+subdf=employees[,c("logIncome","TotalWorkingYears","JobLevel","JobRole")]
+
+```
+
+
+Partial Residual Plot for All potential Candidate explanatory categorical variables
+
+```{r}
+subdf=employees[,c("logIncome","TotalWorkingYears","JobLevel","JobRole")]
+
+pResPlots=lapply( factorNames[!(factorNames %in% names(subdf) )], function(x) partialResidualPlot(employees,subdf,x) )
+
+#variable="AttritionBusinessTravel"
+
+
+
+
+#partialResidualPlot(interactionDf,subdf,"DepartmentJobRole")
+#interactionPlots=lapply( interactionColName, function(x) partialResidualPlot(interactionDf,subdf,x) )
+
+
+```
+
+
+
+
+
+```{r}
+partialRegList = lapply(numberNames,function(x) partialRegression(employees,subdf,x,"logIncome","Gender"))
+
+```
+
+
+
+```{r}
+#functions that calculate RMSE for log income or income for a potential variable
+mseTester=function(subdf,df,variable){
+subdf[,variable]=df[,variable]
+mse=sqrt(cvMse(subdf,"logIncome",logIncome~.,numMSPEs = 1000))
+subdf=subdf[,!(names(subdf) ==variable)]
+mse
+}
+mseTester2=function(subdf,df,variable){
+subdf[,variable]=df[,variable]
+mse=sqrt(monteCarloMSE(subdf,"logIncome",logIncome~.,numMSPEs = 1000))
+subdf=subdf[,!(names(subdf) ==variable)]
+mse
+}
+mseTesterDollar=function(subdf,df,variable){
+subdf[,variable]=df[,variable]
+subdf=subdf[,names(subdf)!="logIncome"]
+subdf[,"MonthlyIncome"]=employees[,"MonthlyIncome"]
+mse=sqrt(monteCarloMSE(subdf,"MonthlyIncome",MonthlyIncome~.,numMSPEs = 1000))
+subdf=subdf[,!(names(subdf) ==variable)]
+mse
+}
+
+mseTester2(subdf,employees,"YearsInCurrentRole")
+
+mseTester2(subdf,employees,"TotalWorkingYears")
+
+# ad YiC to the model
+subdf[,"YearsInCurrentRole"]=employees[,"YearsInCurrentRole"]
+
+```
+
+Objective is to create a loop that will use will calculate the SSE for the regression of logIncome against each variable for a constant seed/ sampling of our training set.  The loop should have 100 different resamplings of train set. for each resampling, should calculate the SSE for each of the 36 variables.  Afer we add a variable, we should be able to run the loop again on our updated model with the additional variable and see which is the next variable with the lowest SSE.
+
+Loop will take a current variable, add the logIncome and additional var to it
+```{r}
+#subdf=data.frame("TotalWorkingYears"= employees[,"TotalWorkingYears"])
+currentVars=c("TotalWorkingYears","logIncome")
+#subdf[,"logIncome"]=employees[,"logIncome"]
+iterations=2
+colNames=factorNames 
+
+cvRMSE = function(employees,currentVars,colNames,iterations=5)
+{rmses = matrix(nrow=length(colNames),ncol=iterations)
+dimnames(rmses)[[1]]=as.list(colNames)
+#changing the shuffling for every x in iterations
+x=1
+
+split=0.5
+
+for(x in 1:iterations){
+    #this stays the same everyloop
+   
+    #change this ever loop
+   
+    # add an indices coln to data, retrieve the sampled indices, and subset the explan 
+    indices=seq(1:nrow(employees))
+    indices = sample(indices,round(split*length(indices)))
+    
+for(i in 1:length(colNames))    
+    # calculate the RMSE for each explan then change indices
+    #subset the all column using the indices
+{    allVars=c(colNames[i],currentVars)
+    subdf=employees[indices,allVars]
+    
+    
+    
+    test=employees[-indices,allVars]
+    Model1_fit = lm(logIncome~., data = subdf)
+    Model1_Preds = predict(Model1_fit, newdata = test)
+    Model1_MSE=mse(as.numeric(test[,"logIncome"]),Model1_Preds)
+    rmses[colNames[i],x]=sqrt(Model1_MSE)
+    subdf=subdf[,names(subdf)!=colNames[i]]}}
+rmses
+}
+currentVars=c("logIncome","TotalWorkingYears","JobLevel","JobRole","YearsInCurrentRole")
+columnNames=c(factorNames,numberNames)
+columnNames= columnNames[!(columnNames %in% c("MonthlyIncome","logIncome"))]
+columnNames=columnNames[!(columnNames %in% currentVars)]
+iterations=100
+nxtVar= cvRMSE(employees,currentVars,columnNames,iterations = iterations)
+nxtVarAvg = rowSums(nxtVar)/iterations
+data.frame(var=names(nxtVarAvg), SSE= nxtVarAvg) %>% ggplot() + geom_point(aes(var,SSE))+
+  theme(axis.text.x=element_text(angle=90))
+```
+
+
+
+Generate predictions for competition set
+```{r}
+#competition set must contain the explanaotry variables used in formula MATCHING TRANSFORMED
+
+employeesComp=employees[,names(employees)!="MonthlyIncome"]
+
+salaryComp=read.csv("CaseStudy2CompSet No Salary.csv")
+
+salaryComp=salaryComp %>% mutate(YearsAtCompany=sqrt(YearsAtCompany),
+                               YearsWithCurrManager=sqrt(YearsWithCurrManager),
+                               TotalWorkingYears=sqrt(TotalWorkingYears),
+                               YearsInCurrentRole=sqrt(YearsInCurrentRole))
+#if added any derived explanatory variables change salaryComp
+
+#change the formula input with best model
+
+salaryFit = lm(logIncome~TotalWorkingYears+JobLevel+JobRole+YearsInCurrentRole,data=employeesComp)
+salaryPreds = predict(salaryFit, newdata = salaryComp)
+#unlog the predictions
+salaryPreds=exp(salaryPreds)
+#SANITY CHECK
+hist(employees$MonthlyIncome,breaks=100)
+hist((salaryPreds),breaks=100)
+```
+Write predictions in ID-Salary Format
+```{r}
+Case2PredictionsRegress = data.frame(ID=salaryComp$ID,MonthlyIncome=salaryPreds)
+write.csv(Case2PredictionsRegress,"Case2PredictionsLai Salary.csv")
+
+```
+
+
+
+
+#Classification of Attrition
+EDA
+```{r}
+plotlist2 <- lapply(factorNames, function(x) catplot(employees, x, "Attrition"))
+```
+EDA numerical vars
+```{r}
+plotlist <- lapply(numberNames, function(x) numplot(employees, x, "Attrition"))
+```
+
+Monte Carlo Accuracy, Sens, Spec
+
+```{r}
+
+
+explanatory=c("OverTime","StockOptionLevel","MonthlyIncome")
+response="Attrition"
+splitPerc = .5
+data=employees[,c(explanatory,response)]
+iterations=100
+numks=9
+#hardcoded for attrition
+CVclassify=function(data,explanatory,response,splitPerc=0.7,iterations=100){
+  masterAcc=double(iterations)
+  masterSens=double(iterations)
+  masterSpec=double(iterations)
+  #masterAcc=matrix(nrow = iterations, ncol = numks)
+  
+  classProp = data %>% group_by(Attrition) %>% summarise(prop=n()/nrow(data))
+  attrNo= with(classProp,prop[Attrition=="No"])
+  
+  
+  for( x in 1:iterations){
+    
+  #accs = data.frame(accuracy = numeric(30), k = numeric(30))
+data = data %>% mutate(indices = seq(1:nrow(data)) )
+train=data %>% group_by(Attrition) %>% group_modify( ~ CV(.x,split=splitPerc))
+test=data[-train$indices,]  
+data=data[,names(data)!="indices"]
+responses= train[,response]
+#get the response column in vector form REPLACE TRAIN[,RESPONSE] with RESPONSE
+responses=unlist(responses)
+   # for( i in 1:numks){
+    
+    
+    model=naiveBayes(train[,explanatory],responses)
+  
+  result=predict(model,test[,explanatory],type = "raw")
+  classifications = ifelse(result[,1]<attrNo,"Yes","No")
+  #classificationIndex = max.col(result)
+  #Automate this later
+  #resultCols=dimnames(result)[[2]]
+  #classifications=resultCols[classificationIndex]
+  classifications=as.factor(classifications)
+  levels(classifications)=levels(data[,response])
+    CM = confusionMatrix(table(classifications,test[,response]))
+    masterAcc[x] = CM$overall[1]
+    masterSens[x]=CM$byClass[1]
+    masterSpec[x]=CM$byClass[2]
+    }
+  #}
+list(
+    MeanAcc = mean(masterAcc),
+  MeanSens = mean(masterSens),
+  MeanSpec=mean(masterSpec)
+)
+}
+CVclassify(employees,c("OverTime","WorkLifeBalance","JobRole"),"Attrition")
+#OverTime JobInvolvement MonthlyIncome MaritalStatus
+#CVclassify(employees,c("OverTime","JobInvolvement","MonthlyIncome","MaritalStatus"),"Attrition")
+```
+Input: vector of variables, current variable,var named list of sens vector for each variable
+Output: an additional sens for each sens vector for each variable
+
+Create inputs
+```{r}
+sensList=list()
+currentVariable=c("OverTime")
+varList=c("JobInvolvement","WorkLifeBalance")
+splitPerc=0.5
+iterations=2
+data=employees
+data = data %>% mutate(indices = seq(1:nrow(data)) )
+train=data %>% group_by(Attrition) %>% group_modify( ~ CV(.x,split=splitPerc))
+test=data[-train$indices,]  
+data=data[,names(data)!="indices"]
+responses= train[,response]
+#get the response column in vector form REPLACE TRAIN[,RESPONSE] with RESPONSE
+responses=unlist(responses)
+
+sensList=lapply(varList,function(x) sensList[[x]] = double(iterations))
+names(sensList)=varList
+```
+Calculate the sensitivities using currentVariable plus the varList var
+```{r}
+x=1
+response="Attrition"
+data=employees
+  classProp = data %>% group_by(Attrition) %>% summarise(prop=n()/nrow(data))
+  attrNo= with(classProp,prop[Attrition=="No"])
+newVar = varList[1]
+newVarStats =  function(train,test,responses,currentVariable,newVar)
+   {explanatory=c(currentVariable,newVar)
+  model=naiveBayes(train[,explanatory],responses)
+  result=predict(model,test[,explanatory],type = "raw")
+    classifications = ifelse(result[,1]<attrNo,"Yes","No")
+    #classificationIndex = max.col(result)
+    #Automate this later
+    #resultCols=dimnames(result)[[2]]
+    #classifications=resultCols[classificationIndex]
+    classifications=as.factor(classifications)
+    levels(classifications)=levels(data[,response])
+      CM = confusionMatrix(table(classifications,test[,response]))
+      
+       list(spec=CM$byClass[2],sens=CM$byClass[1])
+      }
+sensList[["WorkLifeBalance"]][x] = newVarStats(train,test,responses,c("OverTime"),"WorkLifeBalance")$spec
+
+sensList=list()
+columnNames= c(factorNames,numberNames)
+#columnNames=columnNames[columnNames!="Attrition"]
+
+sensList=lapply(columnNames,function(x) sensList[[x]] = double(iterations))
+names(sensList)=columnNames
+
+
+#sensList= lapply(columnNames,function(x) sensList[[x]][1] = newVarStats(train,responses,x))
+#names(sensList)=columnNames
+
+```
+
+Now change the train test and observe that the specificities change
+and add running average
+
+```{r}
+data=employees
+data = data %>% mutate(indices = seq(1:nrow(data)) )
+train=data %>% group_by(Attrition) %>% group_modify( ~ CV(.x,split=splitPerc))
+test=data[-train$indices,]  
+data=data[,names(data)!="indices"]
+responses= train[,response]
+#get the response column in vector form REPLACE TRAIN[,RESPONSE] with RESPONSE
+responses=unlist(responses)
+
+sensList= lapply(columnNames,function(x)  newVarStats(train,test,responses,c("OverTime"),x)$spec)
+names(sensList)=columnNames
+
+
+data=employees
+data = data %>% mutate(indices = seq(1:nrow(data)) )
+train=data %>% group_by(Attrition) %>% group_modify( ~ CV(.x,split=splitPerc))
+test=data[-train$indices,]  
+data=data[,names(data)!="indices"]
+responses= train[,response]
+#get the response column in vector form REPLACE TRAIN[,RESPONSE] with RESPONSE
+responses=unlist(responses)
+
+sensList2= lapply(columnNames,function(x)  newVarStats(train,test,responses,c("OverTime"),x)$spec)
+names(sensList2)=columnNames
+
+#take average
+
+avgSpec= lapply(columnNames,function(x) mean(c(sensList[[x]],sensList2[[x]])))
+names(avgSpec)=columnNames
+
+# add another to avgSpec 
+avgSpec=lapply(columnNames,function(x) mean(c(avgSpec[[x]],sensList2[[x]])))
+names(avgSpec)=columnNames
+```
+
+Now create for loop that will do n num of sampling and recalc of sens spec
+```{r}
+data=employees
+currentVariable=c("placeholder","Age")
+iterations=5
+cvSensSpec = function(data,currentVariable,columnNames,iterations)
+{splitPerc=0.5
+response="Attrition"
+  classProp = data %>% group_by(Attrition) %>% summarise(prop=n()/nrow(data))
+  attrNo= with(classProp,prop[Attrition=="No"])
+
+avgSpec=list()
+avgSpec=lapply(columnNames,function(x)  double(iterations))
+names(avgSpec)=columnNames
+
+avgSens=list()
+avgSens=lapply(columnNames,function(x)  double(iterations))
+names(avgSens)=columnNames
+
+
+for(i in 1:iterations){
+
+data = data %>% mutate(indices = seq(1:nrow(data)) )
+
+train=data %>% group_by(Attrition) %>% group_modify( ~ CV(.x,split=splitPerc))
+train=as.data.frame(train)
+test=data[-train$indices,]  
+data=data[,names(data)!="indices"]
+responses= train[,response]
+#get the response column in vector form REPLACE TRAIN[,RESPONSE] with RESPONSE
+responses=unlist(responses)
+
+sensList2= lapply(columnNames,function(x)  newVarStats(train,test,responses,currentVariable,x)$spec)
+names(sensList2)=columnNames
+
+sensList3=lapply(columnNames,function(x)  newVarStats(train,test,responses,currentVariable,x)$sens)
+names(sensList3)=columnNames
+
+if(i==1)
+{avgSpec=sensList2
+ avgSens=sensList3    
+}
+else
+  {avgSpec=lapply(columnNames,function(x) mean(c(avgSpec[[x]],sensList2[[x]])))
+names(avgSpec)=columnNames
+avgSens=lapply(columnNames,function(x) mean(c(avgSens[[x]],sensList3[[x]])))
+names(avgSens)=columnNames
+  } 
+}
+list(sens=avgSens,spec=avgSpec)
+
+}
+columnNames=c(factorNames,numberNames)
+columnNames= columnNames[columnNames!="Attrition"]
+out= cvSensSpec(employees,c("OverTime","JobInvolvement"),columnNames,iterations=5)
+sensitivities= unlist(vapply(columnNames, function(x) out$sens[[x]],double(1)))
+specificities=unlist(vapply(columnNames, function(x) out$spec[[x]],double(1)))
+sensSpec = data.frame(names=columnNames,sens=sensitivities,spec=specificities)
+ggplot(sensSpec) + geom_point(aes(names,spec,color="Spec")) +geom_point(aes(names,sens,color="Sens"))+
+  theme(axis.text.x=element_text(angle=90))
+```
+
+
+
+
+
+Generate predictions using competition set
+
+transform variables of the competition set
+```{r}
+salaryCompAtt=read.csv("CaseStudy2CompSet No Attrition.csv")
+#if any transformations include here
+salaryCompAtt=salaryCompAtt %>% mutate(YearsAtCompany=sqrt(YearsAtCompany),
+                               YearsWithCurrManager=sqrt(YearsWithCurrManager),
+                               TotalWorkingYears=sqrt(TotalWorkingYears),
+                               YearsInCurrentRole=sqrt(YearsInCurrentRole))
+
+salaryCompAtt=salaryCompAtt[,names(salaryCompAtt)!="Over18"]
+salaryCompAtt$logIncome=log(salaryCompAtt$MonthlyIncome)
+#if added new variables change salaryCompAtt
+```
+
+Create excel file of ida and predictions using bayes
+```{r}
+    
+model=naiveBayes(employees[,c("OverTime","JobRole","WorkLifeBalance")],employees[,"Attrition"])
+  
+  result=predict(model,salaryCompAtt[,c("OverTime","JobRole","WorkLifeBalance")],type = "raw")
+
+    data=employees
+    classProp = data %>% group_by(Attrition) %>% summarise(prop=n()/nrow(data))
+  attrNo= with(classProp,prop[Attrition=="No"])
+  
+    classifications = ifelse(result[,1]<attrNo,"Yes","No")
+  #classificationIndex = max.col(result)
+  #Automate this later
+  #resultCols=dimnames(result)[[2]]
+  #classifications=resultCols[classificationIndex]
+
+  classifications=as.factor(classifications)
+  plot(classifications)
+  
+  bayesPred=data.frame(ID=salaryCompAtt$ID,Attrition=classifications)
+  
+write.csv(bayesPred,"Case2PredictionsLai Attrition.csv")
+```
+
+
+
+
+
+
+
+
+Make sure same levels of factors exist in test and train
+```{r}
+#check for the salary competition set
+factorDiff=lapply(factorNames,function(x) setdiff(employees[,x],salaryComp[,x]))
+#check for the attrition compteition set
+factorDiffAtt=lapply(factorNames[-1],function(x) setdiff(employees[,x],salaryCompAtt[,x]))
+
+
+
+```
